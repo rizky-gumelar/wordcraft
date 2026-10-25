@@ -28,7 +28,9 @@
         <activity
             android:name="android.app.NativeActivity"
             android:label="WordCraft"
-            android:configChanges="orientation|keyboard|keyboardHidden|navigation|screenSize|screenLayout|smallestScreenSize"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|density|uiMode|fontScale|layoutDirection|keyboard|keyboardHidden|navigation"
+            android:windowSoftInputMode="adjustResize|stateAlwaysHidden"
             android:exported="true">
             <meta-data
                 android:name="android.app.lib_name"

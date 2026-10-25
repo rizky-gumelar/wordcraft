@@ -7,17 +7,35 @@ mod android {
     use wordcraft_ui_egui::{Services, WordApp};
     use winit::platform::android::activity::AndroidApp;
 
-    pub struct AndroidAppWrapper(pub WordApp);
+    pub struct AndroidAppWrapper {
+        pub app: WordApp,
+        pub was_focused: bool,
+    }
 
     impl eframe::App for AndroidAppWrapper {
         fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-            self.0.logic(ctx);
+            let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+            if self.was_focused && !focused {
+                self.was_focused = false;
+                log::info!("WordCraft backgrounded; throttling render loop");
+            } else if !self.was_focused && focused {
+                self.was_focused = true;
+                log::info!("WordCraft foregrounded; repainting UI");
+                ctx.request_repaint();
+            }
+
+            if !focused {
+                // When in the background, pause heavy processing and unnecessary redraws
+                return;
+            }
+
+            self.app.logic(ctx);
         }
         fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
-            self.0.raw_input_hook(raw);
+            self.app.raw_input_hook(raw);
         }
         fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-            self.0.ui(ui);
+            self.app.ui(ui);
         }
     }
 
@@ -30,34 +48,37 @@ mod android {
         );
         log::info!("Starting WordCraft on Android tablet (Glow/OpenGL ES)...");
 
-        // Load custom user fonts from external files directory or tablet Documents/WordCraft/fonts
-        if let Some(mut path) = app.external_data_path() {
-            path.push("fonts");
-            let _ = std::fs::create_dir_all(&path);
-            let (loaded, _) = wordcraft_fonts::FontDb::global().load_user_fonts(&path);
-            if !loaded.is_empty() {
-                log::info!("Loaded {} user fonts from {:?}", loaded.len(), path);
-            }
-        }
-        for extra in ["/sdcard/Documents/WordCraft/fonts", "/sdcard/Fonts"] {
-            let p = std::path::Path::new(extra);
-            if p.is_dir() {
-                let (loaded, _) = wordcraft_fonts::FontDb::global().load_user_fonts(p);
-                if !loaded.is_empty() {
-                    log::info!("Loaded {} user fonts from {:?}", loaded.len(), p);
+        // Offload custom user fonts loading & directory creation to a background thread
+        // so eframe::run_native opens the UI window instantly with 0ms delay.
+        let ext_data = app.external_data_path();
+        let _ = std::thread::Builder::new()
+            .name("wordcraft-android-init".into())
+            .spawn(move || {
+                for doc_dir in ["/sdcard/Documents/WordCraft", "/storage/emulated/0/Documents/WordCraft"] {
+                    let p = std::path::Path::new(doc_dir);
+                    let _ = std::fs::create_dir_all(p);
                 }
-            }
-        }
-
-        // Ensure default document save/export directory exists on Android storage
-        for doc_dir in ["/sdcard/Documents/WordCraft", "/storage/emulated/0/Documents/WordCraft"] {
-            let p = std::path::Path::new(doc_dir);
-            let _ = std::fs::create_dir_all(p);
-        }
-        if let Some(mut path) = app.external_data_path() {
-            path.push("Documents");
-            let _ = std::fs::create_dir_all(&path);
-        }
+                if let Some(mut path) = ext_data {
+                    path.push("Documents");
+                    let _ = std::fs::create_dir_all(&path);
+                    path.pop();
+                    path.push("fonts");
+                    let _ = std::fs::create_dir_all(&path);
+                    let (loaded, _) = wordcraft_fonts::FontDb::global().load_user_fonts(&path);
+                    if !loaded.is_empty() {
+                        log::info!("Loaded {} user fonts from {:?}", loaded.len(), path);
+                    }
+                }
+                for extra in ["/sdcard/Documents/WordCraft/fonts", "/sdcard/Fonts"] {
+                    let p = std::path::Path::new(extra);
+                    if p.is_dir() {
+                        let (loaded, _) = wordcraft_fonts::FontDb::global().load_user_fonts(p);
+                        if !loaded.is_empty() {
+                            log::info!("Loaded {} user fonts from {:?}", loaded.len(), p);
+                        }
+                    }
+                }
+            });
 
         let mut options = eframe::NativeOptions::default();
         options.android_app = Some(app);
@@ -86,7 +107,7 @@ mod android {
                     });
                 }
 
-                Ok(Box::new(AndroidAppWrapper(app)))
+                Ok(Box::new(AndroidAppWrapper { app, was_focused: true }))
             }),
         ) {
             log::error!("WordCraft failed to start: {e}");
