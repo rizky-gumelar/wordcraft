@@ -85,13 +85,14 @@ pub fn key_name(k: Key) -> Option<&'static str> {
 /// A key with its modifiers as the registry writes shortcuts (`Mod+Shift+K`).
 pub fn combo(m: Modifiers, key: &str, with_shift: bool) -> String {
     let mut s = String::new();
-    if m.command {
+    let cmd = m.command || (cfg!(target_os = "android") && (m.ctrl || m.mac_cmd));
+    if cmd {
         s.push_str("Mod+");
     }
-    if m.ctrl && !m.command {
+    if m.ctrl && !cmd {
         s.push_str("Ctrl+");
     }
-    if m.mac_cmd && m.ctrl {
+    if m.mac_cmd && m.ctrl && !cmd {
         s.push_str("Ctrl+");
     }
     if m.alt {
@@ -209,13 +210,15 @@ fn equation_key(app: &mut WordApp, key: Key, m: Modifiers) -> bool {
 /// key) — not Mod+Shift+V (Paste Formatting) or Mod+Alt+V (Paste Special) — so a clipboard
 /// picture may be pasted on it (#45).
 fn is_paste_release(key: Key, modifiers: egui::Modifiers) -> bool {
-    (modifiers.command || key == Key::Paste) && !modifiers.alt && !modifiers.shift
+    let cmd = modifiers.command || (cfg!(target_os = "android") && (modifiers.ctrl || modifiers.mac_cmd));
+    (cmd || key == Key::Paste) && !modifiers.alt && !modifiers.shift
 }
 
 /// The modifiers a V release stands for: its own, or, when Mod went up before V and no V press
 /// came (egui-winit keeps Mod+V presses), those held with Mod.
 fn paste_release_modifiers(released: Modifiers, press_seen: bool, held: Option<Modifiers>) -> Modifiers {
-    if released.command || press_seen { released } else { held.unwrap_or(released) }
+    let cmd = released.command || (cfg!(target_os = "android") && (released.ctrl || released.mac_cmd));
+    if cmd || press_seen { released } else { held.unwrap_or(released) }
 }
 
 /// Whether `key` is a Shift, Ctrl, Alt or Super key, whose own presses don't end a Mod+V.
@@ -228,7 +231,8 @@ fn is_modifier_key(key: Key) -> bool {
 
 /// Whether releasing `key` with `modifiers` is Mod+Alt+V (Paste Special).
 fn is_paste_special_release(key: Key, modifiers: egui::Modifiers) -> bool {
-    key == Key::V && modifiers.command && modifiers.alt && !modifiers.shift
+    let cmd = modifiers.command || (cfg!(target_os = "android") && (modifiers.ctrl || modifiers.mac_cmd));
+    key == Key::V && cmd && modifiers.alt && !modifiers.shift
 }
 
 /// Events for the focused canvas: text, editing keys, clipboard, IME. While keytips are showing
@@ -272,17 +276,24 @@ pub fn canvas_events(app: &mut WordApp, ctx: &egui::Context) {
     app.canvas.ime_join_text = None;
     // Mod held since an earlier frame (its ModifiersChanged went by then).
     let held = ctx.input(|i| i.modifiers);
-    if held.command {
+    let held_cmd = held.command || (cfg!(target_os = "android") && (held.ctrl || held.mac_cmd));
+    if held_cmd {
         app.canvas.paste_mods = Some(held);
     }
     for e in events {
         // Which presses reached the canvas, and the modifiers held with Mod, in event order: Mod
         // can go down and up within one frame, leaving the frame's modifiers without it.
         match &e {
-            egui::Event::ModifiersChanged(m) if m.command => app.canvas.paste_mods = Some(*m),
+            egui::Event::ModifiersChanged(m) => {
+                let cmd = m.command || (cfg!(target_os = "android") && (m.ctrl || m.mac_cmd));
+                if cmd {
+                    app.canvas.paste_mods = Some(*m);
+                }
+            }
             egui::Event::Key { key: Key::V | Key::Paste, pressed: true, .. } => app.canvas.v_pressed = true,
             egui::Event::Key { key, pressed: true, modifiers, .. } if !is_modifier_key(*key) => {
-                app.canvas.paste_mods = modifiers.command.then_some(*modifiers);
+                let cmd = modifiers.command || (cfg!(target_os = "android") && (modifiers.ctrl || modifiers.mac_cmd));
+                app.canvas.paste_mods = cmd.then_some(*modifiers);
             }
             egui::Event::WindowFocused(_) => {
                 app.canvas.v_pressed = false;
@@ -368,7 +379,13 @@ pub fn canvas_events(app: &mut WordApp, ctx: &egui::Context) {
         match e {
             egui::Event::Text(t) => {
                 let m = ctx.input(|i| i.modifiers);
-                let is_cmd = if cfg!(target_os = "macos") { m.command } else { (m.command || m.ctrl) && !m.alt };
+                let is_cmd = if cfg!(target_os = "macos") {
+                    m.command
+                } else if cfg!(target_os = "android") {
+                    (m.command || m.ctrl || m.mac_cmd) && !m.alt
+                } else {
+                    (m.command || m.ctrl) && !m.alt
+                };
                 if is_cmd {
                     continue;
                 }

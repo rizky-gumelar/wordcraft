@@ -1047,7 +1047,16 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
     // Keys first, so this frame lays out and paints what was typed (handled after painting, a
     // keystroke showed one frame later). Focus is the canvas's from the last frame.
     // While "Save changes?" is up, keys answer it rather than edit the document behind it.
-    if app.canvas.focused && !matches!(app.dialog, Some(crate::dialogs::Dialog::SaveChanges { .. })) {
+    let has_key_events = ui.input(|i| {
+        i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. } | egui::Event::Text(_) | egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_)))
+    });
+    let no_modal = !matches!(app.dialog, Some(crate::dialogs::Dialog::SaveChanges { .. }));
+    let handle_keys = (app.canvas.focused || (has_key_events && app.dialog.is_none())) && no_modal;
+
+    if handle_keys {
+        if !app.canvas.focused && has_key_events {
+            app.canvas.want_focus = true;
+        }
         crate::keys::canvas_events(app, ui.ctx());
     } else {
         // Alt+numpad entry doesn't survive the canvas losing the keyboard.

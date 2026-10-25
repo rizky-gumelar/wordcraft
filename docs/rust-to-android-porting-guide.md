@@ -172,6 +172,35 @@ key_password = "password123"
    ctx.set_style(style);
    ```
 
+### E. Optimasi Keyboard Fisik (Hardware Keyboard & Shortcut Mirip Word Windows)
+Saat tablet dipasangkan keyboard fisik (Bluetooth, USB OTG, atau Keyboard Cover/Dock):
+1. **Mencegah Activity Restart saat Keyboard Dipasang/Dilepas**:
+   Tambahkan `keyboard|navigation` pada `configChanges` di `AndroidManifest.xml`:
+   ```xml
+   android:configChanges="orientation|keyboard|keyboardHidden|navigation|screenSize|screenLayout|smallestScreenSize"
+   ```
+2. **Klaim Fokus Otomatis saat Tombol Fisik Ditekan**:
+   Pada layar sentuh, fokus sengaja dilepas saat scroll di luar kertas agar keyboard virtual tidak muncul. Namun saat keyboard fisik ditekan, aplikasi harus langsung merespons shortcut / ketikan tanpa memaksa user mengetuk kertas terlebih dahulu:
+   ```rust
+   let has_key_events = ui.input(|i| {
+       i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. } | egui::Event::Text(_)))
+   });
+   if (app.canvas.focused || (has_key_events && app.dialog.is_none())) {
+       if !app.canvas.focused && has_key_events {
+           app.canvas.want_focus = true;
+       }
+       crate::keys::canvas_events(app, ui.ctx());
+   }
+   ```
+3. **Mendukung Tombol Modifiers Windows (Ctrl) & Mac/Android (Cmd/Meta)**:
+   Di Android, keyboard eksternal bisa memiliki tombol `Ctrl` (layout Windows/PC) maupun `Cmd/Meta/Search`. Petakan keduanya ke `Mod+` agar shortcut standar Word (`Ctrl+B`, `Ctrl+I`, `Ctrl+C`, `Ctrl+V`, `Ctrl+Z`, `Ctrl+S`, `Ctrl+A`, dll.) langsung berfungsi:
+   ```rust
+   let cmd = m.command || (cfg!(target_os = "android") && (m.ctrl || m.mac_cmd));
+   if cmd {
+       s.push_str("Mod+");
+   }
+   ```
+
 ---
 
 ## 4. Alur Build & Tooling
