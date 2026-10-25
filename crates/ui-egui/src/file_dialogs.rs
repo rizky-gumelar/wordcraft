@@ -148,6 +148,11 @@ impl WordApp {
             }
             FileDialogRequest::Save { name, .. } => self.services.pick_save.as_ref().and_then(|f| f(name)),
         };
+        #[cfg(not(target_arch = "wasm32"))]
+        if picked.is_none() && self.services.pick_open.is_none() && self.services.pick_save.is_none() {
+            self.show_file_browser(req, after, false);
+            return Asked::Pending;
+        }
         Asked::Done(self.finish_pick(after, picked))
     }
 

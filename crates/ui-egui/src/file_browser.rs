@@ -89,13 +89,24 @@ pub(crate) fn list_dir(dir: &Path, exts: &[String], cap: usize) -> std::io::Resu
 /// The user's home folder.
 pub(crate) fn home() -> Option<PathBuf> {
     if cfg!(target_os = "android") {
-        if let Some(h) = std::env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from) {
-            return Some(h);
-        }
-        for candidate in ["/sdcard/Documents", "/sdcard", "/storage/emulated/0/Documents", "/storage/emulated/0"] {
+        for candidate in [
+            "/sdcard/Documents/WordCraft",
+            "/storage/emulated/0/Documents/WordCraft",
+            "/sdcard/Documents",
+            "/storage/emulated/0/Documents",
+            "/sdcard/Download",
+            "/storage/emulated/0/Download",
+            "/sdcard",
+            "/storage/emulated/0",
+        ] {
             let p = PathBuf::from(candidate);
-            if p.exists() {
+            if p.is_dir() {
                 return Some(p);
+            }
+        }
+        if let Some(h) = std::env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from) {
+            if h.is_dir() {
+                return Some(h);
             }
         }
         return Some(PathBuf::from("/sdcard"));
@@ -341,7 +352,7 @@ pub(crate) fn show(app: &mut WordApp, ctx: &egui::Context) {
 
 /// The browser's contents; `Some` once it closes (`Some(None)`: cancelled).
 fn body(ui: &mut Ui, b: &mut FileBrowser, t: &Tokens) -> Option<Option<PathBuf>> {
-    if b.unavailable {
+    if b.unavailable && !cfg!(target_os = "android") {
         ui.label(
             egui::RichText::new(tl!(
                 "The system file dialog isn't available, so WordCraft shows its own. To get the system dialog, install a file chooser portal (such as xdg-desktop-portal-gtk) or zenity."

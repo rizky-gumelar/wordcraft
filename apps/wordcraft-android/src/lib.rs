@@ -49,6 +49,16 @@ mod android {
             }
         }
 
+        // Ensure default document save/export directory exists on Android storage
+        for doc_dir in ["/sdcard/Documents/WordCraft", "/storage/emulated/0/Documents/WordCraft"] {
+            let p = std::path::Path::new(doc_dir);
+            let _ = std::fs::create_dir_all(p);
+        }
+        if let Some(mut path) = app.external_data_path() {
+            path.push("Documents");
+            let _ = std::fs::create_dir_all(&path);
+        }
+
         let mut options = eframe::NativeOptions::default();
         options.android_app = Some(app);
         options.renderer = eframe::Renderer::Glow;
