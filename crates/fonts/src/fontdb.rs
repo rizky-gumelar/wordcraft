@@ -38,6 +38,14 @@ static BUNDLED: &[&[u8]] = &[
     include_bytes!("../../../assets/fonts/Inter-Medium.ttf"),
     include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf"),
     include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf"),
+    include_bytes!("../../../assets/fonts/Carlito-Regular.ttf"),
+    include_bytes!("../../../assets/fonts/Carlito-Bold.ttf"),
+    include_bytes!("../../../assets/fonts/Carlito-Italic.ttf"),
+    include_bytes!("../../../assets/fonts/Carlito-BoldItalic.ttf"),
+    include_bytes!("../../../assets/fonts/Tinos-Regular.ttf"),
+    include_bytes!("../../../assets/fonts/Tinos-Bold.ttf"),
+    include_bytes!("../../../assets/fonts/Tinos-Italic.ttf"),
+    include_bytes!("../../../assets/fonts/Tinos-BoldItalic.ttf"),
 ];
 
 #[derive(Clone)]
@@ -1060,6 +1068,12 @@ impl FontDb {
         let mut v: Vec<String> = self.read_faces().iter().flat_map(|f| [f.family.clone(), f.legacy_family.clone()]).collect();
         #[cfg(not(target_arch = "wasm32"))]
         v.extend(self.read_catalog().iter().flat_map(|c| [c.family.clone(), c.legacy.clone()]));
+        if self.is_loaded("Carlito") && !v.iter().any(|s| s.eq_ignore_ascii_case("Calibri")) {
+            v.push("Calibri".into());
+        }
+        if self.is_loaded("Tinos") && !v.iter().any(|s| s.eq_ignore_ascii_case("Times New Roman")) {
+            v.push("Times New Roman".into());
+        }
         v.sort_by_key(|a| a.to_lowercase());
         v.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
         v

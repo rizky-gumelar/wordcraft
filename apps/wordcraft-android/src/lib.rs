@@ -30,6 +30,25 @@ mod android {
         );
         log::info!("Starting WordCraft on Android tablet (Glow/OpenGL ES)...");
 
+        // Load custom user fonts from external files directory or tablet Documents/WordCraft/fonts
+        if let Some(mut path) = app.external_data_path() {
+            path.push("fonts");
+            let _ = std::fs::create_dir_all(&path);
+            let (loaded, _) = wordcraft_fonts::FontDb::global().load_user_fonts(&path);
+            if !loaded.is_empty() {
+                log::info!("Loaded {} user fonts from {:?}", loaded.len(), path);
+            }
+        }
+        for extra in ["/sdcard/Documents/WordCraft/fonts", "/sdcard/Fonts"] {
+            let p = std::path::Path::new(extra);
+            if p.is_dir() {
+                let (loaded, _) = wordcraft_fonts::FontDb::global().load_user_fonts(p);
+                if !loaded.is_empty() {
+                    log::info!("Loaded {} user fonts from {:?}", loaded.len(), p);
+                }
+            }
+        }
+
         let mut options = eframe::NativeOptions::default();
         options.android_app = Some(app);
         options.renderer = eframe::Renderer::Glow;
