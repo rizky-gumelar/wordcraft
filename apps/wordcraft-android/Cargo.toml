@@ -1,0 +1,47 @@
+[package]
+name = "wordcraft-android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "WordCraft Android app (eframe on android-activity)"
+
+[lints.rust]
+unsafe_code = "allow"
+
+[lib]
+crate-type = ["cdylib"]
+name = "wordcraft_android"
+
+[dependencies]
+wordcraft-engine = { workspace = true }
+wordcraft-doc = { workspace = true }
+wordcraft-fonts = { workspace = true }
+wordcraft-ui-egui = { workspace = true }
+eframe = { workspace = true, features = ["default_fonts", "glow", "android-native-activity"] }
+egui = { workspace = true }
+winit = { version = "0.30", default-features = false }
+log = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+android_logger = "0.14"
+
+[package.metadata.android]
+package = "ai.storyteller.wordcraft"
+build_targets = ["aarch64-linux-android", "x86_64-linux-android"]
+resources = "res"
+
+[package.metadata.android.application]
+label = "WordCraft"
+icon = "@mipmap/ic_launcher"
+theme = "@android:style/Theme.NoTitleBar.Fullscreen"
+has_code = false
+
+[package.metadata.android.activity]
+name = "android.app.NativeActivity"
+
+[package.metadata.android.signing.release]
+path = "wordcraft.keystore"
+keystore_password = "wordcraft"
+key_alias = "wordcraft"
+key_password = "wordcraft"

@@ -88,6 +88,18 @@ pub(crate) fn list_dir(dir: &Path, exts: &[String], cap: usize) -> std::io::Resu
 
 /// The user's home folder.
 pub(crate) fn home() -> Option<PathBuf> {
+    if cfg!(target_os = "android") {
+        if let Some(h) = std::env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from) {
+            return Some(h);
+        }
+        for candidate in ["/sdcard/Documents", "/sdcard", "/storage/emulated/0/Documents", "/storage/emulated/0"] {
+            let p = PathBuf::from(candidate);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        return Some(PathBuf::from("/sdcard"));
+    }
     std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).filter(|h| !h.is_empty()).map(PathBuf::from)
 }
 

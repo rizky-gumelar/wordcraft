@@ -84,6 +84,8 @@ pub struct CanvasState {
     pub open_url: Option<String>,
     /// Screen rects of pages last frame (for the control channel: page ↔ screen coordinates).
     pub page_rects: Vec<Rect>,
+    /// On touch devices: whether the current active pointer touch started on a paper page rect.
+    pub touch_started_on_paper: Option<bool>,
     /// While the vertical scrollbar is dragged: the page at the top of the window (0-based),
     /// which a tip beside the pointer names (#2551).
     pub scrollbar_page: Option<usize>,
@@ -267,6 +269,7 @@ impl Default for CanvasState {
             last_shading: "FFF2CC".into(),
             open_url: None,
             page_rects: Vec::new(),
+            touch_started_on_paper: None,
             scrollbar_page: None,
             viewed_page: None,
             scale: PX_PER_PT,
@@ -1092,6 +1095,16 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
     let opts = ui.ctx().options(|o| o.input_options);
     let zoom_delta = ui.input(|i| app.canvas.wheel.zoom(i, &opts, animate));
     // The page point under the pointer before the zoom: it is kept under the pointer (#1223).
+    #[cfg(target_os = "android")]
+    if let Some(multi) = ui.input(|i| i.multi_touch()) {
+        if (multi.zoom_delta - 1.0).abs() > 1e-3 {
+            let reading = app.session.view.read_mode;
+            let pct = (app.canvas.scale / PX_PER_PT * multi.zoom_delta * 100.0)
+                .clamp(if reading { 75.0 } else { 25.0 }, if reading { 150.0 } else { 400.0 });
+            let id = if reading { "view.readTextSize" } else { "view.zoom" };
+            let _ = app.run(id, json!({"value": pct}));
+        }
+    }
     let mut zoom_anchor = None;
     if (zoom_delta - 1.0).abs() > 1e-3 && ui.rect_contains_pointer(area) {
         let reading = app.session.view.read_mode;
@@ -1244,7 +1257,39 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
     } else {
         app.canvas.auto_scroll.update(ui, area)
     };
-    let delta = wheel_delta + auto_delta + middle_delta;
+    #[cfg(target_os = "android")]
+    {
+        if ui.input(|i| i.pointer.primary_pressed()) {
+            let press_pos = ui.input(|i| i.pointer.press_origin().or_else(|| i.pointer.latest_pos()));
+            let on_paper = press_pos.is_some_and(|p| app.canvas.page_rects.iter().any(|r| r.contains(p)));
+            app.canvas.touch_started_on_paper = Some(on_paper);
+        } else if !down && !released {
+            app.canvas.touch_started_on_paper = None;
+        }
+    }
+    #[cfg(target_os = "android")]
+    let touch_delta = {
+        if let Some(multi) = ui.input(|i| i.multi_touch()) {
+            if multi.num_touches >= 2 {
+                -multi.translation_delta
+            } else if app.canvas.touch_started_on_paper == Some(false) {
+                -ui.input(|i| i.pointer.delta())
+            } else {
+                egui::Vec2::ZERO
+            }
+        } else if app.canvas.touch_started_on_paper == Some(false)
+            && ui.input(|i| i.pointer.is_decidedly_dragging() || i.pointer.primary_down())
+        {
+            let d = ui.input(|i| i.pointer.delta());
+            -d
+        } else {
+            egui::Vec2::ZERO
+        }
+    };
+    #[cfg(not(target_os = "android"))]
+    let touch_delta = egui::Vec2::ZERO;
+
+    let delta = wheel_delta + auto_delta + middle_delta + touch_delta;
     let mut scroll_area = egui::ScrollArea::both()
         .id_salt("canvas_scroll")
         .auto_shrink([false, false])
@@ -1719,7 +1764,8 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
             }
             // IME candidate window placement.
             let cr = Rect::from_min_max(pos2(x, y0), pos2(x + 1.0, y1));
-            if focused {
+            let show_ime = focused && (!cfg!(target_os = "android") || !ui.input(|i| i.pointer.is_decidedly_dragging()));
+            if show_ime {
                 ui.ctx().output_mut(|o| {
                     o.ime = Some(egui::output::IMEOutput {
                         rect: cr,
@@ -1781,7 +1827,23 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
     let keyboard_click = ui.memory(|m| m.has_focus(resp.id)) && ui.input(|i| i.key_pressed(egui::Key::Space) || i.key_pressed(egui::Key::Enter));
     let pointer_click = resp.clicked_by(egui::PointerButton::Primary);
     let accesskit_click = resp.clicked() && !pointer_click && !keyboard_click;
+
+    #[cfg(target_os = "android")]
+    let on_paper = resp.interact_pointer_pos().is_some_and(|p| rects.iter().any(|pr| pr.contains(p)));
+    #[cfg(not(target_os = "android"))]
+    let on_paper = true;
+
+    #[cfg(target_os = "android")]
+    let focus_click = (pointer_click && on_paper) || accesskit_click;
+    #[cfg(not(target_os = "android"))]
     let focus_click = pointer_click || accesskit_click || resp.drag_started();
+
+    #[cfg(target_os = "android")]
+    if (pointer_click && !on_paper) || (resp.drag_started() && !on_paper) {
+        resp.surrender_focus();
+        app.canvas.focused = false;
+    }
+
     if focus_click || (app.canvas.want_focus && !resp.has_focus()) {
         resp.request_focus();
     }
@@ -2584,6 +2646,15 @@ fn mouse(app: &mut WordApp, ui: &Ui, resp: &egui::Response, rects: &[Rect], layo
         return;
     }
     let Some(p) = pointer else { return };
+
+    #[cfg(target_os = "android")]
+    {
+        let on_paper = rects.iter().any(|r| r.contains(p));
+        // Swipe / drag outside paper scrolls and must not select words or move caret.
+        if app.canvas.touch_started_on_paper == Some(false) || (!app.canvas.dragging && !on_paper) {
+            return;
+        }
+    }
     // While drag-selecting, the pointer may sit past the viewport's edge (or the window's):
     // hit-test where it would be inside the view, so as the edge auto-scroll moves the content the
     // selection keeps growing under a stationary pointer (#688).
