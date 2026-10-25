@@ -719,7 +719,8 @@ fn alt_code_echoed(app: &mut WordApp, echo: &AltCodeEcho, text: &str) -> bool {
 /// Whether a key runs its shortcut with the canvas unfocused (after a ribbon click, say): Mod and
 /// Alt shortcuts (Alt+Q reaches Search from anywhere, as in Word, #819) and the function keys.
 fn is_global_shortcut(key: Key, m: Modifiers) -> bool {
-    m.command || m.alt || is_function_key(key)
+    let cmd = m.command || (cfg!(target_os = "android") && (m.ctrl || m.mac_cmd));
+    cmd || m.alt || is_function_key(key)
 }
 
 /// Command shortcuts when the canvas isn't focused but no text field is either.

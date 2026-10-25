@@ -647,6 +647,8 @@ pub struct WordApp {
     pub zotero: zotero::ZoteroLink,
     /// The egui context, once the first frame has run (background work wakes the UI with it).
     pub(crate) ctx: Option<egui::Context>,
+    #[cfg(target_os = "android")]
+    pub android_mods: egui::Modifiers,
     /// Read Aloud: the start of the sentence the caret was last moved to, and the last error shown.
     pub(crate) read_aloud_at: Option<wordcraft_engine::doc::Pos>,
     pub(crate) read_aloud_error: Option<String>,
@@ -777,6 +779,8 @@ impl WordApp {
             recovery_seen: false,
             no_document: None,
             comment_drafts: Default::default(),
+            #[cfg(target_os = "android")]
+            android_mods: egui::Modifiers::default(),
         }
     }
 
@@ -2429,6 +2433,74 @@ impl WordApp {
     pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {
         if cfg!(target_os = "macos") {
             control_click_as_secondary(&mut raw.events, &mut self.control_click);
+        }
+        #[cfg(target_os = "android")]
+        {
+            let mut prev_mods = self.android_mods;
+            let mut new_events = Vec::with_capacity(raw.events.len() + 4);
+
+            for mut e in raw.events.drain(..) {
+                let mut mod_changed = false;
+                match &e {
+                    egui::Event::Key { key, pressed, .. } => match key {
+                        egui::Key::ControlLeft | egui::Key::ControlRight => {
+                            self.android_mods.ctrl = *pressed;
+                            mod_changed = true;
+                        }
+                        egui::Key::AltLeft | egui::Key::AltRight => {
+                            self.android_mods.alt = *pressed;
+                            mod_changed = true;
+                        }
+                        egui::Key::ShiftLeft | egui::Key::ShiftRight => {
+                            self.android_mods.shift = *pressed;
+                            mod_changed = true;
+                        }
+                        egui::Key::SuperLeft | egui::Key::SuperRight => {
+                            self.android_mods.mac_cmd = *pressed;
+                            mod_changed = true;
+                        }
+                        _ => {}
+                    },
+                    egui::Event::WindowFocused(false) => {
+                        self.android_mods = egui::Modifiers::default();
+                        mod_changed = true;
+                    }
+                    _ => {}
+                }
+                self.android_mods.command = self.android_mods.ctrl || self.android_mods.mac_cmd;
+
+                if mod_changed || self.android_mods != prev_mods {
+                    new_events.push(egui::Event::ModifiersChanged(self.android_mods));
+                    prev_mods = self.android_mods;
+                }
+
+                if let egui::Event::Key { modifiers, .. } = &mut e {
+                    *modifiers = self.android_mods;
+                }
+
+                // Suppress text generation when Ctrl / Cmd is held (e.g. typing 'b' when pressing Ctrl+B)
+                if (self.android_mods.ctrl || self.android_mods.mac_cmd) && matches!(e, egui::Event::Text(_)) {
+                    continue;
+                }
+
+                new_events.push(e);
+            }
+
+            // Always ensure egui is synchronized with active modifiers at the start of event processing
+            if !new_events.is_empty()
+                && self.android_mods != egui::Modifiers::default()
+                && !new_events.iter().any(|e| matches!(e, egui::Event::ModifiersChanged(_)))
+            {
+                new_events.insert(0, egui::Event::ModifiersChanged(self.android_mods));
+            }
+
+            // If hardware keyboard events arrive, activate focus for canvas
+            if new_events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. } | egui::Event::Text(_))) {
+                raw.focused = true;
+                self.canvas.focused = true;
+            }
+
+            raw.events = new_events;
         }
         if self.synthetic.is_empty() {
             return;

@@ -1047,16 +1047,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
     // Keys first, so this frame lays out and paints what was typed (handled after painting, a
     // keystroke showed one frame later). Focus is the canvas's from the last frame.
     // While "Save changes?" is up, keys answer it rather than edit the document behind it.
-    let has_key_events = ui.input(|i| {
-        i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. } | egui::Event::Text(_) | egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_)))
-    });
-    let no_modal = !matches!(app.dialog, Some(crate::dialogs::Dialog::SaveChanges { .. }));
-    let handle_keys = (app.canvas.focused || (has_key_events && app.dialog.is_none())) && no_modal;
-
-    if handle_keys {
-        if !app.canvas.focused && has_key_events {
-            app.canvas.want_focus = true;
-        }
+    if app.canvas.focused && !matches!(app.dialog, Some(crate::dialogs::Dialog::SaveChanges { .. })) {
         crate::keys::canvas_events(app, ui.ctx());
     } else {
         // Alt+numpad entry doesn't survive the canvas losing the keyboard.
@@ -1840,7 +1831,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
     #[cfg(target_os = "android")]
     let on_paper = resp.interact_pointer_pos().is_some_and(|p| rects.iter().any(|pr| pr.contains(p)));
     #[cfg(not(target_os = "android"))]
-    let on_paper = true;
+    let _on_paper = true;
 
     #[cfg(target_os = "android")]
     let focus_click = (pointer_click && on_paper) || accesskit_click;
