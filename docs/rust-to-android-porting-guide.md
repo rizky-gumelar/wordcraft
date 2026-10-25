@@ -239,3 +239,44 @@ Hasil APK: `target/release/apk/my_app_android.apk`.
 ```sh
 adb install -r target/release/apk/my_app_android.apk
 ```
+
+---
+
+## 5. Penanganan Font di Android (Calibri, Times New Roman, & Custom Fonts)
+
+### Tantangan:
+Android tidak memiliki font bawaan desktop seperti **Calibri**, **Times New Roman**, **Arial**, atau **Cambria**. Selain itu, file binary font asli Microsoft berpemilik (*proprietary*) dan tidak boleh di-bundle ke dalam open-source repo/APK tanpa lisensi komersial.
+
+### Solusi Terbaik (Metric-Compatible OFL Fonts):
+Gunakan font pengganti yang 100% kompatibel secara metrik (lebar glyph, spasi, dan tinggi baris identik sehingga layout dokumen tidak bergeser):
+- **Calibri** $\rightarrow$ **Carlito** (SIL Open Font License)
+- **Times New Roman** $\rightarrow$ **Tinos** / **Liberation Serif** (SIL Open Font License)
+- **Arial** $\rightarrow$ **Liberation Sans** / **Arimo** (SIL Open Font License)
+
+### Langkah Implementasi:
+1. **Bundle Font Metrik di Rust**:
+   Unduh font OFL ke `assets/fonts/` dan masukkan ke `BUNDLED`:
+   ```rust
+   static BUNDLED: &[&[u8]] = &[
+       include_bytes!("../../../assets/fonts/Carlito-Regular.ttf"),
+       include_bytes!("../../../assets/fonts/Carlito-Bold.ttf"),
+       include_bytes!("../../../assets/fonts/Carlito-Italic.ttf"),
+       include_bytes!("../../../assets/fonts/Carlito-BoldItalic.ttf"),
+       include_bytes!("../../../assets/fonts/Tinos-Regular.ttf"),
+       include_bytes!("../../../assets/fonts/Tinos-Bold.ttf"),
+       include_bytes!("../../../assets/fonts/Tinos-Italic.ttf"),
+       include_bytes!("../../../assets/fonts/Tinos-BoldItalic.ttf"),
+       // ...
+   ];
+   ```
+2. **Daftarkan Alias di Font Picker**:
+   Agar pengguna langsung melihat pilihan "Calibri" dan "Times New Roman" di antarmuka aplikasi.
+3. **Dukungan Direktori User Fonts**:
+   Izinkan pengguna menaruh file font `.ttf`/`.otf` apa pun langsung di perangkat tablet (misal `/sdcard/Android/data/<package>/files/fonts` atau `/sdcard/Documents/<App>/fonts`):
+   ```rust
+   if let Some(mut path) = app.external_data_path() {
+       path.push("fonts");
+       let _ = std::fs::create_dir_all(&path);
+       wordcraft_fonts::FontDb::global().load_user_fonts(&path);
+   }
+   ```
