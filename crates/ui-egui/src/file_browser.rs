@@ -332,14 +332,21 @@ pub(crate) fn show(app: &mut WordApp, ctx: &egui::Context) {
     let Some(mut b) = app.file_browser.open.take() else { return };
     let t = Tokens::get(ctx);
     let mut done: Option<Option<PathBuf>> = None;
+    let screen = ctx.input(|i| i.viewport_rect());
+    // Clamp to screen width so it never overflows or clips in portrait mode
+    let max_w = (screen.width() - 24.0).clamp(280.0, 620.0);
+    let max_h = (screen.height() - 24.0).max(240.0);
     let window = egui::Window::new(tl!(b.title()))
         .id(egui::Id::new("builtin_file_browser"))
         .collapsible(false)
         .resizable(false)
-        .anchor(Align2::CENTER_CENTER, vec2(0.0, -20.0));
+        .constrain(true)
+        .max_width(max_w)
+        .max_height(max_h)
+        .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0));
     let shown = crate::window_close::window(ctx, window).show(ctx, |ui| {
-        ui.set_width(620.0);
-        done = body(ui, &mut b, &t);
+        ui.set_width(max_w);
+        done = body(ui, &mut b, &t, screen.height());
     });
     if shown.is_some_and(|s| crate::window_close::show(ctx, &s.response, &t)) {
         done = Some(None);
@@ -351,7 +358,7 @@ pub(crate) fn show(app: &mut WordApp, ctx: &egui::Context) {
 }
 
 /// The browser's contents; `Some` once it closes (`Some(None)`: cancelled).
-fn body(ui: &mut Ui, b: &mut FileBrowser, t: &Tokens) -> Option<Option<PathBuf>> {
+fn body(ui: &mut Ui, b: &mut FileBrowser, t: &Tokens, screen_height: f32) -> Option<Option<PathBuf>> {
     if b.unavailable && !cfg!(target_os = "android") {
         ui.label(
             egui::RichText::new(tl!(
@@ -384,33 +391,40 @@ fn body(ui: &mut Ui, b: &mut FileBrowser, t: &Tokens) -> Option<Option<PathBuf>>
     let mut pick = false;
     let mut go: Option<PathBuf> = None;
     let mut clicked: Option<Entry> = None;
+    let row_h = if cfg!(target_os = "android") { 36.0 } else { ROW };
+    let scroll_h = if screen_height < 600.0 {
+        (screen_height - 240.0).clamp(110.0, 220.0)
+    } else {
+        (screen_height * 0.40).clamp(160.0, 320.0)
+    };
     egui::Frame::NONE.fill(t.input).stroke(egui::Stroke::new(1.0, t.input_border)).inner_margin(2.0).show(ui, |ui| {
         let entries: &[Entry] = b.listing.as_ref().map(|l| l.entries.as_slice()).unwrap_or(&[]);
         // An unreadable folder has its own message below; the hint is for a listing that came back empty.
         let listed = b.listing.is_ok();
-        egui::ScrollArea::vertical().max_height(300.0).min_scrolled_height(300.0).auto_shrink([false, false]).show_rows(
+        egui::ScrollArea::vertical().max_height(scroll_h).min_scrolled_height(scroll_h.min(140.0)).auto_shrink([false, false]).show_rows(
             ui,
-            ROW,
+            row_h,
             entries.len(),
             |ui, range| {
                 if listed && entries.is_empty() {
                     // #3037: an empty folder (or a type filter that matches nothing) says so
                     // instead of showing a blank box.
-                    ui.add_space(140.0);
+                    ui.add_space((scroll_h * 0.4).max(20.0));
                     ui.vertical_centered(|ui| {
                         ui.label(egui::RichText::new(tl!("No items to show.")).small().color(t.text_dim));
                     });
                 }
                 for e in entries.get(range).unwrap_or(&[]) {
-                    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click());
+                    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
                     if b.selected.as_ref() == Some(&e.path) {
                         ui.painter().rect_filled(r, 2.0, t.checked);
                     } else if resp.hovered() {
                         ui.painter().rect_filled(r, 2.0, t.hover);
                     }
-                    let icon = Rect::from_center_size(pos2(r.min.x + 14.0, r.center().y), vec2(18.0, 18.0));
+                    let icon_size = if cfg!(target_os = "android") { 20.0 } else { 18.0 };
+                    let icon = Rect::from_center_size(pos2(r.min.x + 14.0, r.center().y), vec2(icon_size, icon_size));
                     icons::paint(ui.painter(), icon, if e.dir { "folder" } else { "file" }, t.icon, t.accent);
-                    ui.painter().with_clip_rect(r).text(pos2(r.min.x + 30.0, r.center().y), Align2::LEFT_CENTER, &e.name, regular(13.0), t.text);
+                    ui.painter().with_clip_rect(r).text(pos2(r.min.x + 32.0, r.center().y), Align2::LEFT_CENTER, &e.name, regular(13.5), t.text);
                     if resp.double_clicked() {
                         if e.dir {
                             go = Some(e.path.clone());
@@ -448,28 +462,59 @@ fn body(ui: &mut Ui, b: &mut FileBrowser, t: &Tokens) -> Option<Option<PathBuf>>
     }
     ui.add_space(6.0);
     let mut refilter = false;
-    ui.horizontal(|ui| {
-        let label = ui.label(tl!("File name:"));
-        // The name field takes what the label (longer in some languages) and the type list leave.
-        let width = (ui.available_width() - 170.0).max(120.0);
-        let r = ui.add(egui::TextEdit::singleline(&mut b.name).desired_width(width)).labelled_by(label.id);
-        if b.focus_name {
-            r.request_focus();
-            b.focus_name = false;
-        }
-        if r.changed() {
-            b.selected = None;
-            b.note = Note::None;
-        }
-        let before = b.filter;
-        let current = b.filters.get(b.filter).map(|(l, _)| tl!(l.as_str()).to_string()).unwrap_or_default();
-        egui::ComboBox::from_id_salt("builtin_file_browser_type").selected_text(current).width(150.0).show_ui(ui, |ui| {
-            for (i, (l, _)) in b.filters.iter().enumerate() {
-                ui.selectable_value(&mut b.filter, i, tl!(l.as_str()));
-            }
+    let narrow = ui.available_width() < 460.0;
+    if narrow {
+        ui.vertical(|ui| {
+            ui.horizontal(|ui| {
+                let label = ui.label(tl!("File name:"));
+                let width = (ui.available_width() - 8.0).max(80.0);
+                let r = ui.add(egui::TextEdit::singleline(&mut b.name).desired_width(width)).labelled_by(label.id);
+                if b.focus_name {
+                    r.request_focus();
+                    b.focus_name = false;
+                }
+                if r.changed() {
+                    b.selected = None;
+                    b.note = Note::None;
+                }
+            });
+            ui.add_space(4.0);
+            let before = b.filter;
+            let current = b.filters.get(b.filter).map(|(l, _)| tl!(l.as_str()).to_string()).unwrap_or_default();
+            egui::ComboBox::from_id_salt("builtin_file_browser_type")
+                .selected_text(current)
+                .width(ui.available_width() - 4.0)
+                .show_ui(ui, |ui| {
+                    for (i, (l, _)) in b.filters.iter().enumerate() {
+                        ui.selectable_value(&mut b.filter, i, tl!(l.as_str()));
+                    }
+                });
+            refilter = b.filter != before;
         });
-        refilter = b.filter != before;
-    });
+    } else {
+        ui.horizontal(|ui| {
+            let label = ui.label(tl!("File name:"));
+            // The name field takes what the label (longer in some languages) and the type list leave.
+            let width = (ui.available_width() - 170.0).max(120.0);
+            let r = ui.add(egui::TextEdit::singleline(&mut b.name).desired_width(width)).labelled_by(label.id);
+            if b.focus_name {
+                r.request_focus();
+                b.focus_name = false;
+            }
+            if r.changed() {
+                b.selected = None;
+                b.note = Note::None;
+            }
+            let before = b.filter;
+            let current = b.filters.get(b.filter).map(|(l, _)| tl!(l.as_str()).to_string()).unwrap_or_default();
+            egui::ComboBox::from_id_salt("builtin_file_browser_type").selected_text(current).width(150.0).show_ui(ui, |ui| {
+                for (i, (l, _)) in b.filters.iter().enumerate() {
+                    ui.selectable_value(&mut b.filter, i, tl!(l.as_str()));
+                }
+            });
+            refilter = b.filter != before;
+        });
+    }
     if refilter {
         b.navigate(b.dir.clone());
     }
@@ -478,8 +523,11 @@ fn body(ui: &mut Ui, b: &mut FileBrowser, t: &Tokens) -> Option<Option<PathBuf>>
     let enter = !location_done && ui.input(|i| i.key_pressed(egui::Key::Enter));
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let (ok, cancelb) =
-                crate::dialogs::ok_cancel_responses(ui, |ui| ui.add(crate::widgets::primary_button(ui, tl!(b.ok_label()))), tl!("Cancel"));
+            let (ok, cancelb) = crate::dialogs::ok_cancel_responses(
+                ui,
+                |ui| ui.add(crate::widgets::primary_button(ui, tl!(b.ok_label())).min_size(vec2(80.0, 32.0))),
+                tl!("Cancel"),
+            );
             cancel |= cancelb.clicked();
             pick |= ok.clicked() || enter;
         });
@@ -495,7 +543,8 @@ fn body(ui: &mut Ui, b: &mut FileBrowser, t: &Tokens) -> Option<Option<PathBuf>>
 
 /// A small button with a drawn icon and a tooltip; true when clicked.
 fn icon_button(ui: &mut Ui, t: &Tokens, icon: &str, tip: &str, enabled: bool) -> bool {
-    let (r, resp) = ui.allocate_exact_size(vec2(28.0, 24.0), if enabled { Sense::click() } else { Sense::hover() });
+    let size = if cfg!(target_os = "android") { vec2(36.0, 32.0) } else { vec2(28.0, 24.0) };
+    let (r, resp) = ui.allocate_exact_size(size, if enabled { Sense::click() } else { Sense::hover() });
     if enabled && resp.hovered() {
         ui.painter().rect_filled(r, 3.0, t.hover);
     }
